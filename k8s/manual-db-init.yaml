@@ -1,0 +1,97 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: manual-db-init
+  namespace: betteruptime
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:15
+        command:
+        - sh
+        - -c
+        - |
+          until pg_isready -h postgres -p 5432 -U postgres; do
+            echo "Waiting for postgres..."
+            sleep 2
+          done
+          echo "PostgreSQL is ready!"
+        env:
+        - name: PGPASSWORD
+          value: "postgres"
+      containers:
+      - name: manual-db-init
+        image: postgres:15
+        env:
+        - name: PGPASSWORD
+          value: "postgres"
+        command:
+        - sh
+        - -c
+        - |
+          echo "Creating tables manually..."
+          
+          psql -h postgres -U postgres -d mydb << 'EOF'
+          -- Create enum
+          CREATE TYPE "WebsiteStatus" AS ENUM ('Up', 'Down', 'Unknown');
+          
+          -- Create tables
+          CREATE TABLE IF NOT EXISTS "User" (
+              "id" TEXT NOT NULL,
+              "username" TEXT NOT NULL,
+              "password" TEXT NOT NULL,
+              CONSTRAINT "User_pkey" PRIMARY KEY ("id")
+          );
+          
+          CREATE TABLE IF NOT EXISTS "Website" (
+              "id" TEXT NOT NULL,
+              "url" TEXT NOT NULL,
+              "userId" TEXT NOT NULL,
+              "timeAdded" TIMESTAMP(3) NOT NULL,
+              CONSTRAINT "Website_pkey" PRIMARY KEY ("id")
+          );
+          
+          CREATE TABLE IF NOT EXISTS "Region" (
+              "id" TEXT NOT NULL,
+              "name" TEXT NOT NULL,
+              CONSTRAINT "Region_pkey" PRIMARY KEY ("id")
+          );
+          
+          CREATE TABLE IF NOT EXISTS "WebsiteTick" (
+              "id" TEXT NOT NULL,
+              "response_time_ms" INTEGER NOT NULL,
+              "status" "WebsiteStatus" NOT NULL,
+              "region_id" TEXT NOT NULL,
+              "website_id" TEXT NOT NULL,
+              "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              CONSTRAINT "WebsiteTick_pkey" PRIMARY KEY ("id")
+          );
+          
+          -- Create unique indexes
+          CREATE UNIQUE INDEX IF NOT EXISTS "User_username_key" ON "User"("username");
+          
+          -- Add foreign keys
+          ALTER TABLE "Website" DROP CONSTRAINT IF EXISTS "Website_userId_fkey";
+          ALTER TABLE "Website" ADD CONSTRAINT "Website_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+          
+          ALTER TABLE "WebsiteTick" DROP CONSTRAINT IF EXISTS "WebsiteTick_region_id_fkey";
+          ALTER TABLE "WebsiteTick" ADD CONSTRAINT "WebsiteTick_region_id_fkey" FOREIGN KEY ("region_id") REFERENCES "Region"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+          
+          ALTER TABLE "WebsiteTick" DROP CONSTRAINT IF EXISTS "WebsiteTick_website_id_fkey";
+          ALTER TABLE "WebsiteTick" ADD CONSTRAINT "WebsiteTick_website_id_fkey" FOREIGN KEY ("website_id") REFERENCES "Website"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+          
+          -- Insert seed data
+          INSERT INTO "Region" ("id", "name") VALUES 
+              ('32c9087b-7c53-4d84-8b63-32517cbd17c3', 'india'),
+              ('f5a13f6c-8e91-42b8-9c0e-07b4567a98e0', 'usa')
+          ON CONFLICT ("id") DO NOTHING;
+          
+          -- Verify data
+          SELECT 'Regions created:' as status;
+          SELECT * FROM "Region";
+          EOF
+          
+          echo "Database initialization completed!"
