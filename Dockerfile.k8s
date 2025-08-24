@@ -1,0 +1,39 @@
+FROM oven/bun:1.1.14
+
+WORKDIR /app
+
+# Install required tools + Node.js
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    netcat-openbsd \
+    curl \
+    gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && bun add -g tsx \
+    && npm install -g ts-node typescript \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy workspace package files
+COPY package.json bun.lock* turbo.json ./
+COPY packages/store/package.json ./packages/store/package.json
+
+# Copy all source code
+COPY packages/store ./packages/store
+
+# Install dependencies at workspace root
+RUN bun install --frozen-lockfile
+
+# Install dependencies inside store package
+WORKDIR /app/packages/store
+RUN bun install --frozen-lockfile
+
+# Generate Prisma client
+RUN bun run generate
+
+# Set environment variables
+ENV DATABASE_URL="postgresql://postgres:postgres@postgres:5432/mydb"
+
+WORKDIR /app
+
+CMD ["sleep", "infinity"]

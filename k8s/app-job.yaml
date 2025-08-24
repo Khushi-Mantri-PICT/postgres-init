@@ -1,0 +1,72 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-init
+  namespace: betteruptime
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:15
+        command:
+        - sh
+        - -c
+        - |
+          until pg_isready -h postgres -p 5432 -U postgres; do
+            echo "Waiting for postgres..."
+            sleep 2
+          done
+          echo "PostgreSQL is ready!"
+        env:
+        - name: PGPASSWORD
+          value: "postgres"
+      containers:
+      - name: db-init
+        image: oven/bun:1.1.14
+        workingDir: /app
+        command:
+        - sh
+        - -c
+        - |
+          echo "Installing system dependencies..."
+          apt-get update && apt-get install -y postgresql-client nodejs npm curl gnupg
+          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+          apt-get install -y nodejs
+          
+          echo "Installing global dependencies..."
+          bun add -g tsx
+          npm install -g ts-node typescript
+          
+          echo "Installing project dependencies..."
+          cd /app
+          bun install --frozen-lockfile
+          
+          cd /app/packages/store
+          bun install --frozen-lockfile
+          
+          echo "Generating Prisma client..."
+          bun run generate
+          
+          echo "Running migrations..."
+          bun run migrate:deploy
+          
+          echo "Running seed..."
+          npm run seed
+          
+          echo "Database initialization completed!"
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: DATABASE_URL
+        volumeMounts:
+        - name: source-code
+          mountPath: /app
+      volumes:
+      - name: source-code
+        hostPath:
+          path: /tmp/betteruptime-source
+          type: DirectoryOrCreate
